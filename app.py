@@ -93,7 +93,6 @@ def main(session):
         session.rollback()
         return {"error": str(e)}
 
-
 @app.get("/")
 def index():
     return "Hello World"
