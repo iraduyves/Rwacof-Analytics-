@@ -1,12 +1,12 @@
-from sqlalchemy import Column, Float, String, create_engine
+from sqlalchemy import Column, Float, Integer, String, create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 Base = declarative_base()
 
 class Commodity(Base):
     __tablename__ = 'commodity'
-    id = Column(String, primary_key=True)
-    energy = Column(Float)
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    energy = Column(String(255))
     price = Column(Float)
     day = Column(Float)
     percentage = Column(Float)
@@ -14,7 +14,7 @@ class Commodity(Base):
     monthly = Column(Float)
     ytd = Column(Float)
     yoy = Column(Float)
-    date = Column(String)
+    date = Column(String(255))
 
     def __repr__(self):
         return f"<Commodity(id={self.id}, name={self.name}, price={self.price}, unit={self.unit})>"
@@ -36,11 +36,11 @@ class Commodity(Base):
 class DatabaseService:
     def __init__(self, db_url):
         self.db_url = db_url
-        self.engine = None
-        self.Session = None
+        self.engine = create_engine(db_url)
+        self.Base = Base
 
     def create_engine(self):
-        self.engine = create_engine(self.db_url)
+        self.engine = create_engine(bind=self.engine)
         return self.engine
 
     def create_session(self):
@@ -52,4 +52,9 @@ class DatabaseService:
     def create_all(self):
         if not self.engine:
             raise Exception("Engine not created. Call create_engine() first.")
-        Base.metadata.create_all(self.engine)
+        Base.metadata.create_all(bind=self.engine)
+
+    def drop_all(self):
+        if not self.engine:
+            raise Exception("Engine not created. Call create_engine() first.")
+        Base.metadata.drop_all(bind=self.engine)
