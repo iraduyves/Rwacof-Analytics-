@@ -6,7 +6,7 @@ Base = declarative_base()
 class Commodity(Base):
     __tablename__ = 'commodity'
     id = Column(Integer, primary_key=True, autoincrement=True)
-    energy = Column(String(255))
+    agricultural = Column(String(255))
     price = Column(Float)
     day = Column(Float)
     percentage = Column(Float)
@@ -22,7 +22,7 @@ class Commodity(Base):
     def serialize(self):
         return {
             'id': self.id,
-            'energy': self.energy,
+            'agricultural': self.agricultural,
             'price': self.price,
             'day': self.day,
             'percentage': self.percentage,
