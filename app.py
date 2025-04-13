@@ -23,7 +23,7 @@ def main(session):
             print("Failed to retrieve the page")
             return
         soup = bs(html.content, 'html.parser')
-        # Get the table
+     
         table = soup.find('table')
 
         head = table.find('thead').find_all('th')
@@ -31,12 +31,14 @@ def main(session):
         body = table.find('tbody').find_all('tr')
 
         heads = [" "] * len(head)
+
         i = 0
         for th in head:
             th = html2text.html2text(th.text).strip()
             heads[i%9] = th
             i = i + 1
         header_row = ",".join(heads)
+        print(header_row)
 
         f.write(header_row + "\n")
 
@@ -68,13 +70,57 @@ def main(session):
         return dataset
 
 
-@app.route("/api")
-def get_commodities():
-    return json.dumps(main(session)), {'Content-Type': 'application/json'}
 
 @app.get("/")
 def index():
     return "Hello World"
+
+@app.route("/api/commodities")
+def get_commodities():
+    return json.dumps(main(session)), {'Content-Type': 'application/json'}
+
+
+@app.route("/api/analytics")
+def analytics():
+   
+    main(session)
+    data = session.query(Commodity).all()
+    df = pd.DataFrame([d.serialize() for d in data])
+    print(df.head()) 
+
+  
+    for col in ['price', 'percentage', 'weekly', 'monthly', 'ytd', 'yoy']:
+      df[col] = pd.to_numeric(df[col], errors='coerce')
+
+    average_price = df['price'].mean()
+    min_price_row = df.loc[df['price'].idxmin()]
+    max_price_row = df.loc[df['price'].idxmax()]
+
+    top_gainers = df.sort_values(by='percentage', ascending=False).head(3)[['energy', 'percentage']]
+    top_losers = df.sort_values(by='percentage').head(3)[['energy', 'percentage']]
+
+    ytd_positive = df[df['ytd'] > 0].shape[0]
+    ytd_negative = df[df['ytd'] < 0].shape[0]
+
+    result = {
+    "average_price": round(average_price, 2),
+    "min_price": {
+        "commodity": min_price_row['energy'],
+        "price": min_price_row['price']
+    },
+    "max_price": {
+        "commodity": max_price_row['energy'],
+        "price": max_price_row['price']
+    },
+    "top_gainers": top_gainers.to_dict(orient='records'),
+    "top_losers": top_losers.to_dict(orient='records'),
+    "ytd": {
+        "positive": ytd_positive,
+        "negative": ytd_negative
+    }
+   }
+
+    return json.dumps(result), {'Content-Type': 'application/json'}
 
 if __name__ == "__main__":
     try:
