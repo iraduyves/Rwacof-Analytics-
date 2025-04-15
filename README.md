@@ -32,7 +32,6 @@ analytics-rcf/
 └── requirements.txt # Python dependencies (not provided in the prompt)
 ```
 
-
 ## Setup Instructions
 1. **Clone the Repository**:
    ```bash
