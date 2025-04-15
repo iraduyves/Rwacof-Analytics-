@@ -12,7 +12,6 @@ Analytics RCF is a Flask-based web application designed to fetch, process, and a
 4. **Data Analysis**: Performs statistical analysis on commodity data using pandas.
 5. **Background Scheduler**: Automatically refreshes commodity data every 30 minutes using APScheduler.
 
-
 ## Technologies Used
 - **Python**: Core programming language.
 - **Flask**: Web framework for building APIs and serving the application.
