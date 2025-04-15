@@ -22,7 +22,6 @@ Analytics RCF is a Flask-based web application designed to fetch, process, and a
 - **MySQL**: Database for storing commodity data.
 - **APScheduler**: For scheduling periodic tasks.
 - **html2text**: For parsing HTML content into plain text.
-
 ## Project Structure
 ```
 analytics-rcf/
