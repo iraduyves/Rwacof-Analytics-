@@ -12,7 +12,40 @@ Analytics RCF is a Flask-based web application designed to fetch, process, and a
 4. **Data Analysis**: Performs statistical analysis on commodity data using pandas.
 5. **Background Scheduler**: Automatically refreshes commodity data every 30 minutes using APScheduler.
 
+## Synthetic Pharmacy Sales Data API
 
+This application can generate synthetic pharmaceutical sales data for a single pharmacy in Kigali. The generated dataset simulates daily sales of various products, with the `units_sold` column containing random values independent of all other features. This is useful for testing analytics pipelines or demonstrating data workflows without using real sales data.
+
+### Endpoint: `/api/synthetic_sales`
+
+- **Method:** `GET`
+- **Description:** Generates a synthetic sales dataset for a single pharmacy in Kigali between the specified dates.
+- **Query Parameters:**
+  - `start_date` (string, required): Start date in `YYYY-MM-DD` format.
+  - `end_date` (string, required): End date in `YYYY-MM-DD` format.
+- **Response:**
+  - Returns a CSV file containing the generated synthetic sales data.
+
+#### Example Usage
+
+To generate and download synthetic sales data from January 1, 2023 to January 31, 2023:
+
+```
+GET http://127.0.0.1:5000/api/synthetic_sales?start_date=2023-01-01&end_date=2023-01-31
+```
+
+The response will be a CSV file with columns such as:
+- `date`
+- `pharmacy_name`
+- `location`
+- `product_name`
+- `units_sold` (random noise)
+- `unit_price`
+- `total_sales`
+
+**Note:** All data is randomly generated and does not represent real sales.
+
+---
 
 ## Technologies Used
 - **Python**: Core programming language.

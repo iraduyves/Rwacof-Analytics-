@@ -9,9 +9,9 @@ from functools import lru_cache
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(_name_)
 
-app = Flask(__name__)
+app = Flask(_name_)
 
 # More detailed ATC classification with disease prevalence by season
 ATC_CATEGORIES = {
@@ -78,7 +78,7 @@ for atc_code, data in ATC_CATEGORIES.items():
 # Rwanda provinces and healthcare centers
 RWANDA_PROVINCES = ["Kigali", "Northern", "Eastern", "Southern", "Western"]
 HEALTHCARE_CENTERS = {
-    "Kigali": ["CHUK", "King Faisal Hospital", "Kibagabaga Hospital", "Nyarugenge Health Center", "Rwanda Military Hospital"],
+    "Kigali": ["CHUK", "King Faisal Hospital", "Kibagabaga Hospital", "Nyarugenge Health Center"],
     "Northern": ["Ruhengeri Hospital", "Byumba Hospital", "Kinihira Hospital"],
     "Eastern": ["Rwamagana Hospital", "Kibungo Hospital", "Nyagatare Health Center"],
     "Southern": ["CHUB", "Kabutare Hospital", "Kigeme Hospital"],
@@ -236,10 +236,11 @@ def generate_supply_chain_delay(province, date):
         "Western": [0.4, 0.3, 0.2, 0.1]
     }
     
+    # Adjust weights for rainy seasons
     season = get_rwanda_season(date.month)
     weights = base_weights[province].copy()
     
-    if (season in ["Itumba", "Umuhindo"]):  # Rainy seasons
+    if season in ["Itumba", "Umuhindo"]:  # Rainy seasons
         # Shift weight from "None" to higher delay categories
         shift = 0.2 if season == "Itumba" else 0.15  # Long rainy has more impact
         weights[0] -= shift
@@ -271,77 +272,247 @@ def generate_drug_price(drug_name, date, province):
     
     return round(base_price * geo_factor * time_factor * random_factor, 2)
 
-def generate_dataset(start_date, end_date):
-    """Generate the synthetic dataset for a single pharmacy in Kigali, with units_sold as pure random noise and no health center columns."""
-    logger.info(f"Generating data for single pharmacy from {start_date} to {end_date} (units_sold is random noise, no health center columns)")
+def calculate_units_sold(base_demand, date, atc_code, drug_name, price, 
+                         province, health_center, supply_delay, promotion):
+    """Calculate units sold with multiple realistic factors."""
+    # Get the seasonal factor for this drug category
+    season = get_rwanda_season(date.month)
+    seasonal_factor = ATC_CATEGORIES[atc_code]["seasonal_factor"][season]
+    
+    # Base calculation
+    units = base_demand * seasonal_factor
+    
+    # Apply disease outbreak factor if applicable
+    outbreak_factor = is_during_outbreak(date, atc_code)
+    units *= outbreak_factor
+    
+    # Apply demographic factor based on province and drug type
+    demographic_factor = DEMOGRAPHIC_DATA[province]["disease_prevalence"][atc_code]
+    units *= demographic_factor
+    
+    # Holiday effect
+    holiday_effect = 1 + (is_holiday_or_near(date) * 0.15)
+    units *= holiday_effect
+    
+    # Day of week patterns (weekends have lower hospital visits)
+    day_of_week = date.weekday()
+    if day_of_week >= 5:  # Weekend
+        units *= 0.7
+    
+    # Price elasticity effect - adjusted by income level
+    avg_price = DRUG_DATABASE[drug_name]["base_price"]
+    price_ratio = price / avg_price
+    
+    # Income-adjusted price elasticity
+    income_elasticity_factor = {
+        "higher": 0.3,     # Wealthy areas less sensitive to price
+        "medium": 0.4,
+        "medium-low": 0.45,
+        "lower": 0.5       # Poorer areas more sensitive to price
+    }[DEMOGRAPHIC_DATA[province]["income_level"]]
+    
+    if price_ratio > 1:
+        units *= (1 - (price_ratio - 1) * income_elasticity_factor)
+    else:
+        units *= (1 + (1 - price_ratio) * (income_elasticity_factor * 0.6))
+    
+    # Promotion effect
+    if promotion:
+        units *= 1.2
+    
+    # Supply chain effect
+    availability_factor = {
+        "None": 1.0,
+        "Low": 0.9,
+        "Medium": 0.75,
+        "High": 0.5
+    }[supply_delay]
+    units *= availability_factor
+    
+    # Center size factor (bigger hospitals use more)
+    center_size_factor = 1.0
+    if "Hospital" in health_center:
+        if any(premium in health_center for premium in ["CHUK", "King Faisal", "CHUB"]):
+            center_size_factor = 1.5
+        else:
+            center_size_factor = 1.2
+    units *= center_size_factor
+    
+    # Add some randomness
+    units *= random.uniform(0.9, 1.1)
+    
+    return max(int(units), 0)  # Ensure non-negative
+
+def generate_dataset(start_date, end_date, include_trends=True):
+    """Generate the complete synthetic dataset."""
+    logger.info(f"Generating data from {start_date} to {end_date}")
     rows = []
     date_range = pd.date_range(start_date, end_date)
-    rng = np.random.default_rng(42)  # Seed for reproducibility
-
-    # Define your pharmacy's attributes
-    pharmacy_name = "Downtown Pharmacy"
-    province = "Kigali"
-    center_type = "pharmacy"
-    province_demographics = DEMOGRAPHIC_DATA[province]
-    population_density = province_demographics["population_density"]
-    income_level = province_demographics["income_level"]
-
-    for drug_name, drug_data in DRUG_DATABASE.items():
-        atc_code = drug_data["atc_code"]
-        for date in date_range:
-            supply_delay = generate_supply_chain_delay(province, date)
-            price = generate_drug_price(drug_name, date, province)
-            promotion = rng.choice([0, 1])
-            effectiveness = drug_data["effectiveness"]
-            time_on_market = drug_data["time_on_market"]
-            competitors = rng.integers(2, 8)
-            # availability_score = round(rng.uniform(0.3, 1.0), 2)
-            units_sold = rng.integers(0, 1000)  # Pure random noise
-            stock_entry_timestamp = date - timedelta(days=int(rng.integers(5, 30)))
-            expiration_date = date + timedelta(days=int(rng.integers(30, drug_data["shelf_life"]*30)))
-            base_stock_buffer = int(rng.integers(10, 50))
-            available_stock = units_sold + base_stock_buffer
-            sale_hour = int(rng.integers(7, 22))
-            sale_timestamp = datetime.combine(date.date(), datetime.min.time()) + timedelta(hours=sale_hour, minutes=int(rng.integers(0, 60)))
-            rows.append({
-                "Drug_ID": drug_name,
-                "ATC_Code": atc_code,
-                "Date": date,
-                "Province": province,
-                "Population_Density": population_density,
-                "Income_Level": income_level,
-                "Pharmacy_Type": center_type,
-                "units_sold": units_sold,
-                "Price_Per_Unit": price,
-                # "Availability_Score": availability_score,
-                "Supply_Chain_Delay": supply_delay,
-                "Season": get_rwanda_season(date.month),
-                "Effectiveness_Rating": effectiveness,
-                "Promotion": promotion,
-                "Holiday_Week": is_holiday_or_near(date),
-                "Disease_Outbreak": round(is_during_outbreak(date, atc_code), 2),
-                "Competitor_Count": competitors,
-                "Time_On_Market": time_on_market,
-                "sale_timestamp": sale_timestamp,
-                "stock_entry_timestamp": stock_entry_timestamp,
-                "expiration_date": expiration_date,
-                "available_stock": available_stock
-            })
-    logger.info(f"Generated {len(rows)} data points for single pharmacy (random units_sold)")
+    
+    # Generate data for each province and health center
+    for province in RWANDA_PROVINCES:
+        # Extract demographic data for this province
+        province_demographics = DEMOGRAPHIC_DATA[province]
+        population_density = province_demographics["population_density"]
+        age_distribution = province_demographics["age_distribution"]
+        income_level = province_demographics["income_level"]
+        
+        for health_center in HEALTHCARE_CENTERS[province]:
+            logger.info(f"Generating data for {health_center} in {province} province")
+            
+            # Determine health center type
+            if "Hospital" in health_center:
+                if any(premium in health_center for premium in ["CHUK", "King Faisal", "CHUB"]):
+                    center_type = "referral_hospital"
+                else:
+                    center_type = "district_hospital"
+            else:
+                center_type = "health_center"
+            
+            # For each drug
+            for drug_name, drug_data in DRUG_DATABASE.items():
+                atc_code = drug_data["atc_code"]
+                base_demand = drug_data["base_demand"]
+                
+                # Adjust base demand by demographics and center type
+                # Referral hospitals see more rare/complex cases
+                if center_type == "referral_hospital":
+                    if atc_code in ["N05B", "N05C", "R03"]:  # More specialized medications
+                        base_demand *= 1.3
+                elif center_type == "health_center":
+                    if atc_code in ["N02BA", "N02BE/B", "M01AE"]:  # Common medications
+                        base_demand *= 1.2
+                    else:
+                        base_demand *= 0.7  # Less specialized meds at health centers
+                
+                # Age distribution impacts on certain medications
+                # More children -> more pediatric medications
+                if age_distribution["0-14"] > 0.38:  # Higher than average children
+                    if atc_code in ["N02BE/B", "R06"]:  # Pediatric-common meds
+                        base_demand *= 1.15
+                
+                # More elderly -> more chronic disease medications
+                if age_distribution["65+"] > 0.035:  # Higher than average elderly
+                    if atc_code in ["M01AB", "M01AE", "N05C"]:  # Elderly-common meds
+                        base_demand *= 1.1
+                
+                # Create artificial trends if requested
+                if include_trends:
+                    # Create some drugs with increasing or decreasing trends
+                    trend_factor = random.choice([0.95, 0.98, 1.0, 1.0, 1.0, 1.02, 1.05])
+                    base_demand_with_trend = base_demand
+                
+                # For each date
+                for date in date_range:
+                    # Apply trend if enabled
+                    if include_trends:
+                        days_passed = (date - start_date).days
+                        base_demand_with_trend = base_demand * (trend_factor ** (days_passed/30))
+                        current_base_demand = base_demand_with_trend
+                    else:
+                        current_base_demand = base_demand
+                    
+                    # Generate variable factors
+                    supply_delay = generate_supply_chain_delay(province, date)
+                    price = generate_drug_price(drug_name, date, province)
+                    
+                    # Promotion probability based on income level
+                    promotion_prob = {
+                        "higher": 0.4,     # More marketing in wealthy areas
+                        "medium": 0.3,
+                        "medium-low": 0.25,
+                        "lower": 0.2       # Less marketing in poorer areas
+                    }[income_level]
+                    promotion = np.random.choice([0, 1], p=[1-promotion_prob, promotion_prob])
+                    
+                    effectiveness = drug_data["effectiveness"]
+                    time_on_market = drug_data["time_on_market"]
+                    competitors = np.random.randint(2, 8)
+                    
+                    # Calculate availability score
+                    availability_score = round({
+                        "None": np.random.uniform(0.9, 1.0),
+                        "Low": np.random.uniform(0.7, 0.9),
+                        "Medium": np.random.uniform(0.5, 0.7),
+                        "High": np.random.uniform(0.3, 0.5)
+                    }[supply_delay], 2)
+                    
+                    # Calculate units sold
+                    units_sold = calculate_units_sold(
+                        current_base_demand, date, atc_code, drug_name, 
+                        price, province, health_center, supply_delay, promotion
+                    )
+                    
+                    # Generate realistic timestamps
+                    stock_entry_timestamp = date - timedelta(days=random.randint(5, 30))
+                    expiration_date = date + timedelta(days=random.randint(30, drug_data["shelf_life"]*30))
+                    
+                    # Available stock adjusted by center type and region
+                    base_stock_buffer = {
+                        "referral_hospital": random.randint(100, 300),
+                        "district_hospital": random.randint(50, 150),
+                        "health_center": random.randint(10, 100)
+                    }[center_type]
+                    
+                    # Remote areas keep more stock to account for supply chain issues
+                    if population_density == "low":
+                        base_stock_buffer = int(base_stock_buffer * 1.3)
+                    
+                    available_stock = units_sold + base_stock_buffer
+                    
+                    # Create sale timestamp at a realistic hour (7AM to 9PM)
+                    sale_hour = random.randint(7, 21)
+                    sale_timestamp = datetime.combine(date.date(), datetime.min.time()) + timedelta(hours=sale_hour, minutes=random.randint(0, 59))
+                    
+                    rows.append({
+                        "Drug_ID": drug_name,
+                        "ATC_Code": atc_code,
+                        "Date": date,
+                        "Province": province,
+                        "Population_Density": population_density,
+                        "Income_Level": income_level,
+                        "Health_Center": health_center,
+                        "Center_Type": center_type,
+                        "units_sold": units_sold,
+                        "Price_Per_Unit": price,
+                        "Availability_Score": availability_score,
+                        "Supply_Chain_Delay": supply_delay,
+                        "Season": get_rwanda_season(date.month),
+                        "Effectiveness_Rating": effectiveness,
+                        "Promotion": promotion,
+                        "Holiday_Week": is_holiday_or_near(date),
+                        "Disease_Outbreak": round(is_during_outbreak(date, atc_code), 2),
+                        "Competitor_Count": competitors,
+                        "Time_On_Market": time_on_market,
+                        "sale_timestamp": sale_timestamp,
+                        "stock_entry_timestamp": stock_entry_timestamp,
+                        "expiration_date": expiration_date,
+                        "available_stock": available_stock
+                    })
+    
+    logger.info(f"Generated {len(rows)} data points")
     return pd.DataFrame(rows)
 
 @app.route("/api/synthetic_sales", methods=["GET"])
 def synthetic_sales():
     """API endpoint to generate synthetic sales data."""
     try:
+        # Get parameters from request
         start_date_str = request.args.get('start_date', '2024-01-01')
         end_date_str = request.args.get('end_date', '2024-12-31')
-    
+        include_trends = request.args.get('include_trends', 'true').lower() == 'true'
+        
+        # Parse dates
         start_date = datetime.strptime(start_date_str, '%Y-%m-%d')
         end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
-        df = generate_dataset(start_date, end_date)
+        
+        # Generate data
+        df = generate_dataset(start_date, end_date, include_trends)
+        
+        # Save to CSV
         csv_filename = "synthetic_pharma_sales.csv"
         df.to_csv(csv_filename, index=False)
+        
         return jsonify({
             "message": "Dataset generated successfully!",
             "row_count": len(df),
@@ -349,6 +520,7 @@ def synthetic_sales():
             "end_date": end_date_str,
             "file_saved": csv_filename
         })
+    
     except Exception as e:
         logger.error(f"Error generating synthetic sales: {str(e)}")
         return jsonify({"error": str(e)}), 500
@@ -371,6 +543,7 @@ def download_csv():
 def generate_sample():
     """Generate a small sample dataset for testing."""
     try:
+        # Generate one week of data
         sample_start = datetime(2024, 1, 1)
         sample_end = datetime(2024, 1, 7)
         
@@ -386,5 +559,5 @@ def generate_sample():
         logger.error(f"Error generating sample: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
-if __name__ == "__main__":
-    app.run(host='0.0.0.0', debug=True, port=5001)
+if _name_ == "_main_":
+    app.run(debug=True)
